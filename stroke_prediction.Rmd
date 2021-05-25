@@ -1,0 +1,295 @@
+---
+title: "Evaluation of three classification models for heart stroke prediction"
+author: "Mauricio Santelices"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Summary
+
+This study evaluates three different classification models for heart stroke prediction. The models are a Random Forest, a K-Nearest Neighbor and a Logistic Regression model.
+
+The data used comes from a Stroke Prediction dataset available at Kaggle in the following link: [https://www.kaggle.com/fedesoriano/stroke-prediction-dataset/metadata](https://www.kaggle.com/fedesoriano/stroke-prediction-dataset/metadata)
+
+This study and the models created are only for educational purposes.
+
+
+### Load data and libraries
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(data.table)
+library(caret)
+library(pROC)
+library(cvms)
+
+data <- read.csv('./data/healthcare-dataset-stroke-data.csv', na.strings = c('N/A'))
+data <- as.data.table(data)
+```
+
+
+```{r}
+summary(data)
+str(data)
+
+```
+
+
+We will drop the *id* variable and also, we will check for columns with missing values.
+
+```{r }
+#Drop ID cols
+data$id <- NULL
+
+# Check cols with NA
+colnames(data)[colSums(is.na(data)) > 0]
+```
+
+
+The *bmi* variable has missing values. We will replace the missing values with the mean bmi based on patient gender.
+
+```{r message=FALSE}
+# Get BMI per gender
+mean_bmi_per_gender <- data %>% group_by(gender) %>% summarise(bmi = mean(bmi, na.rm = TRUE))
+
+
+# Replace NA in BMI with the mean for each gender
+data[gender == 'Female' & is.na(data$bmi), bmi := mean_bmi_per_gender[1, 'bmi']]
+data[gender == 'Male'   & is.na(data$bmi), bmi := mean_bmi_per_gender[2, 'bmi']]
+data[gender == 'Other'  & is.na(data$bmi), bmi := mean_bmi_per_gender[3, 'bmi']]
+```
+
+
+### Exploratory Data Analysis
+
+First, we will compare the stroke events based on patient gender:
+
+```{r}
+colors <- c("tomato", "royalblue", "olivedrab1")
+
+
+tbl <- with(data, table(gender, stroke))
+
+barplot(tbl, legend = TRUE, beside = TRUE, col = colors,
+        names.arg = c("No Stroke", "Stroke"), main = "Stroke events by gender")
+
+barplot(tbl[, 2], legend = TRUE, col = colors, main = "Confirmed stroke by gender")
+
+```
+
+
+Based on the data set, there are more female patients with stroke than males.
+
+Now, we will check the influence of work type in stroke events.
+
+```{r}
+colors <- c("tomato", "royalblue", "olivedrab1", "mediumpurple", "turquoise")
+  
+tbl <- with(data, table(work_type, stroke))
+
+barplot(tbl, legend = TRUE, beside = TRUE, col = colors,
+        names.arg = c("No Stroke", "Stroke"), main = "Stroke events by patient's work type")
+
+barplot(tbl[, 2], col = colors, main = "Confirmed stroke events by patient's work type")
+```
+
+Most patients in the data set have jobs on the private sector. That is reflected in both charts where private sector is the highest value for both, no stroke and confirmed stroke.
+
+The real influence of work type on stroke events need more investigation.
+
+Next, we will compare the residence of the patients with the stroke events registered.
+
+```{r}
+colors <- c("tomato", "royalblue")
+
+tbl <- with(data, table(Residence_type, stroke))
+
+barplot(tbl, legend = TRUE, beside = TRUE, col = colors, 
+        names.arg = c("No Stroke", "Stroke"),
+        main = "Stroke events by patient's Residence type")
+
+barplot(tbl[, 2], col = colors,
+        main = "Confirmed stroke events by patient's Residence type")
+
+```
+
+
+There are not too much difference between patients from rural or urban areas.
+
+Now, we will check the relation of age and stroke events.
+
+```{r}
+tbl <- with(data, table(age, stroke))
+
+barplot(tbl[, 1], col = "royalblue", main = "Patients without stroke by age")
+
+barplot(tbl[, 2], col = "tomato", main = "Patients with stroke events by age")
+
+```
+
+On the second charts we can see that older patients have an higher chance of stroke.
+
+Next, the relation between smoking habits and stroke events.
+
+```{r}
+colors <- c("tomato", "royalblue", "olivedrab1", "mediumpurple")
+
+tbl <- with(data, table(smoking_status, stroke))
+
+barplot(tbl, legend = TRUE, beside = TRUE, col = colors,
+        names.arg = c("No Stroke", "Stroke"), main = "Stroke events by smoking habits")
+
+barplot(tbl[, 2], col = colors, 
+        main = "Confirmed stroke events by smoking habits")
+
+```
+
+Surprisingly, patients that never smoked or that smoked in the past have more stroke events than active smokers. Although, we have to keep in mind that a notable portion of the data doesn't have a clear register of the smoking habits of the patient, represented by the *unknown* category.
+ 
+We will compare the hypertension factor with stroke events now.
+
+```{r warning=FALSE}
+colors <- c("royalblue", "tomato")
+
+tbl <- with(data, table(hypertension, stroke))
+
+barplot(tbl, legend = TRUE, legend.text = c("Hypertension", "No Hypertension"), 
+        beside = TRUE, col = colors,
+        names.arg = c("No Stroke", "Stroke"), 
+        main = "Stroke events by hypertension diagnosis")
+
+barplot(tbl[, 2], col = colors,
+        main = "Confirmed stroke events by hypertension diagnosis",
+        names.arg = c("Without Hypertension", "With Hypertension"))
+
+```
+
+Again it's surprising that most confirmed stroke events are from patients without an hypertension diagnosis.
+
+The next analysis will be the comparations of stroke events and a heart disease background.
+
+```{r warning=FALSE}
+colors <- c("royalblue", "tomato")
+
+tbl <- with(data, table(heart_disease, stroke))
+
+barplot(tbl, legend = TRUE, legend.text = c("Without heart disease", "With heart disease"),
+        beside = TRUE, col = colors,
+        names.arg = c('No Stroke', 'Stroke'), 
+        main = "Stroke events by heart disease background")
+
+barplot(tbl[, 2], col = colors, main = "Confirmed stroke events by heart disease background",
+        names.arg = c("Without heart disease", "With heart disease"))
+```
+
+As shown in the second chart, most of patients with stroke don't have heart diseases.
+
+
+Finally, we will check the distribution of BMI and the average glucose level of patients.
+
+```{r}
+hist(data$bmi, col = "royalblue", main = "BMI distribution", xlab = 'BMI')
+
+```
+
+
+```{r}
+hist(data$avg_glucose_level, col = "tomato", main = "Average glucose levels",
+     xlab = "Average glucose levels")
+
+```
+
+
+### Data transformation
+
+Before training models, the data must be prepared. We decided to use the one-hot encoding technique, converting the categorical variables into multiple ones, each one with a value of 0 or 1.
+
+Also, *age*, *average glucose level* and *bmi* variables will be standarized.
+
+
+```{r}
+data$age <- (data$age - mean(data$age)) / sd(data$age)
+data$bmi <- (data$bmi - mean(data$bmi)) / sd(data$bmi)
+data$avg_glucose_level <- (data$avg_glucose_level - mean(data$avg_glucose_level)) / sd(data$avg_glucose_level)
+```
+
+
+```{r}
+dummy <- dummyVars(" ~ . ", data = data)
+data <- data.frame(predict(dummy, newdata = data))
+```
+
+
+### Model training
+
+First, we need to create a training and testing data set. We will use an 80:20 approach, 80% of the data to the training set and 20% for the final testing.
+
+We also will use the K-folds cross validation method with K = 5 on the training set.
+
+```{r}
+set.seed(1203)
+
+# Target class needs to be a factor
+data$stroke <- factor(data$stroke)
+
+sample <- createDataPartition(y = data$stroke, p = 0.8, list = FALSE)
+train <- data[sample, ]
+test <- data[-sample, ]
+
+
+train_control <- trainControl(method = "cv", number = 5)
+```
+
+
+The models to evaluate are *Random Forest*, *K-Nearest Neighbor* and *Logistic Regression*
+
+**1. Random Forest**
+```{r warning=FALSE}
+randomForest <- train(stroke ~ ., data = train, method = "rf", trControl = train_control)
+randomForest
+```
+
+**2. K-Nearest Neighbor**
+```{r warning=FALSE}
+knn <- train(stroke~., data = train, method = "knn", trControl = train_control)
+knn
+```
+
+**3. Logistic Regression**
+```{r warning=FALSE}
+logisticRegression <- train(stroke~., data = train, method = "glm", 
+                            trControl = train_control,
+                            family = "binomial")
+logisticRegression
+```
+
+
+The model with the best accuracy is **Random Forest** with an accuracy of **95.13%**, so that is the model we will test in the following step.
+
+
+### Model testing
+
+We will do a test using the testing set created before and creating a confusion matrix to evaluate the results. The positive class is **1** which correspond to a stroke.
+
+
+```{r warning=FALSE}
+test$prediction <- predict(randomForest, newdata = test)
+
+test$prediction <- as.character(test$prediction)
+conf_matrix <- evaluate(test, target_col = "stroke", prediction_cols = "prediction", 
+                        type = "binomial", positive = "1")
+
+plot_confusion_matrix(conf_matrix)
+```
+
+### Conclusions
+
+As seen in the confusion matrix, the model was able to correctly classify (95.2%) the patients without an stroke events, but it was not able to correctly identify any patients with stroke.
+
+In addition to the analysis registered on this document, other tests with differents parameters (variable dropping, resampling, different numbers of folds, etc.) and using the other 2 models where performed, but we obtained similar results in each one.
+
+This analysis is a good practical exercice and study material but the models created here are not useful for real world applications because they failed to discriminate between the two required categories.
+
