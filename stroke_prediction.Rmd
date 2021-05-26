@@ -25,6 +25,7 @@ library(data.table)
 library(caret)
 library(pROC)
 library(cvms)
+library(imbalance)
 
 data <- read.csv('./data/healthcare-dataset-stroke-data.csv', na.strings = c('N/A'))
 data <- as.data.table(data)
@@ -209,7 +210,6 @@ Before training models, the data must be prepared. We decided to use the one-hot
 
 Also, *age*, *average glucose level* and *bmi* variables will be standarized.
 
-
 ```{r}
 data$age <- (data$age - mean(data$age)) / sd(data$age)
 data$bmi <- (data$bmi - mean(data$bmi)) / sd(data$bmi)
@@ -223,6 +223,19 @@ data <- data.frame(predict(dummy, newdata = data))
 ```
 
 
+Now, we will check for class imabalance.
+
+```{r}
+table(data$stroke)
+```
+We will use MWMOTE (Majority Weighted Minority Oversampling Technique) for oversampling the stroke class and reduce class imbalance.
+
+```{r}
+oversampled <- mwmote(data, classAttr = "stroke", numInstances = 500)
+oversampled <- round(oversampled)
+```
+
+
 ### Model training
 
 First, we need to create a training and testing data set. We will use an 80:20 approach, 80% of the data to the training set and 20% for the final testing.
@@ -232,13 +245,14 @@ We also will use the K-folds cross validation method with K = 5 on the training 
 ```{r}
 set.seed(1203)
 
+fullData <- rbind(data, oversampled)
+
 # Target class needs to be a factor
-data$stroke <- factor(data$stroke)
+fullData$stroke <- factor(fullData$stroke)
 
-sample <- createDataPartition(y = data$stroke, p = 0.8, list = FALSE)
-train <- data[sample, ]
-test <- data[-sample, ]
-
+sample <- createDataPartition(y = fullData$stroke, p = 0.8, list = FALSE)
+train <- fullData[sample, ]
+test <- fullData[-sample, ]
 
 train_control <- trainControl(method = "cv", number = 5)
 ```
@@ -267,7 +281,7 @@ logisticRegression
 ```
 
 
-The model with the best accuracy is **Random Forest** with an accuracy of **95.13%**, so that is the model we will test in the following step.
+The model with the best accuracy is **Random Forest** with an accuracy of **95.56%**, so that is the model we will test in the following step.
 
 
 ### Model testing
@@ -285,11 +299,11 @@ conf_matrix <- evaluate(test, target_col = "stroke", prediction_cols = "predicti
 plot_confusion_matrix(conf_matrix)
 ```
 
+
 ### Conclusions
 
-As seen in the confusion matrix, the model was able to correctly classify (95.2%) the patients without an stroke events, but it was not able to correctly identify any patients with stroke.
+As seen in the confusion matrix, the model has a high Specifity (99.8%), correctly predicting patients without stroke, but has a Sensitivity (correctly predicting stroke) of 60.4%, which should be higher for real world use.
 
-In addition to the analysis registered on this document, other tests with differents parameters (variable dropping, resampling, different numbers of folds, etc.) and using the other 2 models where performed, but we obtained similar results in each one.
+The original dataset has a very high class imbalance, so an oversampling technique was used. it would be interesting to try to create a new model using a balanced dataset.
 
-This analysis is a good practical exercice and study material but the models created here are not useful for real world applications because they failed to discriminate between the two required categories.
-
+This analysis is a good practical exercice and study material but the models created here are not useful for real world applications because they will need further validation and research.
